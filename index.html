@@ -76,7 +76,7 @@
       <button class="act" data-k="l">SP</button>
     </div>
   </div>
-  <div id="hint">Gamepad: stick/D-pad move, A/B/X/Y attacks, R1/R2 special, Start menu (P1 = first pad, P2 = second). Keys: hold away to block; P1 A/D/W/S + J/U/K/I/L, P2 arrows + 1/2/3/4/5. Up+L uppercut, Down+L dive/fireball. M mute, Esc menu.</div>
+  <div id="hint">Gamepad: stick/D-pad move, A/B/X/Y attacks, R1/R2 special, Start menu (P1 = first pad, P2 = second). Keys: hold away to block; P1 A/D/W/S + J/U/K/I/L, P2 arrows + 1/2/3/4/5. Up+L uppercut, Down+L dive/fireball. K+L Rush / I+L Launcher (20 meter). M mute, Esc menu.</div>
 </div>
 <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 <script>
@@ -84,12 +84,21 @@ const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 const W = 960, H = 540, GROUND = 448;
 const CHARS = [
-  { name: 'RED', style: 'BRAWLER', color: '#e74c3c', trim: '#ffd9d2', speed: 3.5, power: 1.0, durMod: 1,
-    fb: { dmg: 15, speed: 8.5, r: 17, color: '#6cf' }, upper: { invuln: 7, dmg: 18, kb: 9 }, dive: { dmg: 13, reach: 74 } },
-  { name: 'BLUE', style: 'SPEEDSTER', color: '#3498db', trim: '#d6ecff', speed: 4.1, power: .85, durMod: .84,
-    fb: { dmg: 10, speed: 11, r: 13, color: '#8df' }, upper: { invuln: 10, dmg: 13, kb: 6 }, dive: { dmg: 12, reach: 86 } },
-  { name: 'GREEN', style: 'HEAVYWEIGHT', color: '#2ecc71', trim: '#d9ffe8', speed: 2.9, power: 1.28, durMod: 1.12,
-    fb: { dmg: 19, speed: 6.5, r: 22, color: '#fd6' }, upper: { invuln: 4, dmg: 15, kb: 12 }, dive: { dmg: 16, reach: 66 } }
+  { name: 'RED', style: 'BRAWLER', color: '#e74c3c', trim: '#ffd9d2', speed: 3.5, power: 1.0, durMod: 1, build: 1,
+    fb: { dmg: 15, speed: 8.5, r: 17, color: '#6cf' }, upper: { invuln: 7, dmg: 18, kb: 9 }, dive: { dmg: 13, reach: 74 },
+    rush: { dmg: 14, reach: 96, speed: 8 }, launcher: { dmg: 16, kb: 10 } },
+  { name: 'BLUE', style: 'SPEEDSTER', color: '#3498db', trim: '#d6ecff', speed: 4.1, power: .85, durMod: .84, build: .86,
+    fb: { dmg: 10, speed: 11, r: 13, color: '#8df' }, upper: { invuln: 10, dmg: 13, kb: 6 }, dive: { dmg: 12, reach: 86 },
+    rush: { dmg: 11, reach: 104, speed: 10.5 }, launcher: { dmg: 13, kb: 7 } },
+  { name: 'GREEN', style: 'HEAVYWEIGHT', color: '#2ecc71', trim: '#d9ffe8', speed: 2.9, power: 1.28, durMod: 1.12, build: 1.16,
+    fb: { dmg: 19, speed: 6.5, r: 22, color: '#fd6' }, upper: { invuln: 4, dmg: 15, kb: 12 }, dive: { dmg: 16, reach: 66 },
+    rush: { dmg: 19, reach: 84, speed: 6.5 }, launcher: { dmg: 21, kb: 14 } },
+  { name: 'YELLOW', style: 'NINJA', color: '#f1c40f', trim: '#fff3bf', speed: 3.9, power: .92, durMod: .88, build: .9,
+    fb: { dmg: 11, speed: 12, r: 12, color: '#ff5' }, upper: { invuln: 9, dmg: 14, kb: 6 }, dive: { dmg: 11, reach: 94 },
+    rush: { dmg: 12, reach: 100, speed: 11 }, launcher: { dmg: 14, kb: 8 } },
+  { name: 'PURPLE', style: 'GRAPPLER', color: '#9b59b6', trim: '#eadcf5', speed: 2.7, power: 1.35, durMod: 1.18, build: 1.22,
+    fb: { dmg: 21, speed: 5.8, r: 24, color: '#c6f' }, upper: { invuln: 3, dmg: 20, kb: 13 }, dive: { dmg: 18, reach: 60 },
+    rush: { dmg: 20, reach: 76, speed: 6 }, launcher: { dmg: 23, kb: 15 } }
 ];
 const STAGES = ['ROOFTOP', 'NEON CITY', 'TEMPLE'];
 const DIFFS = [
@@ -108,7 +117,9 @@ const A = {
   jlp: { dur: 18, start: 4, end: 10, dmg: 6, reach: 72, stun: 14, kb: 3, pitch: 300, air: true, label: 'JLP' },
   jhp: { dur: 24, start: 7, end: 14, dmg: 11, reach: 88, stun: 20, kb: 5, pitch: 190, air: true, label: 'JHP' },
   upper: { dur: 40, start: 5, end: 17, dmg: 18, reach: 66, stun: 32, kb: 9, pitch: 110, invuln: 7, special: true, label: 'UPPERCUT' },
-  dive: { dur: 32, start: 6, end: 23, dmg: 13, reach: 74, stun: 24, kb: 6, pitch: 140, special: true, air: true, label: 'DIVE' }
+  dive: { dur: 32, start: 6, end: 23, dmg: 13, reach: 74, stun: 24, kb: 6, pitch: 140, special: true, air: true, label: 'DIVE' },
+  rush: { dur: 24, start: 5, end: 12, dmg: 14, reach: 96, stun: 22, kb: 7, pitch: 180, special: true, label: 'RUSH' },
+  launcher: { dur: 36, start: 7, end: 16, dmg: 16, reach: 92, stun: 32, kb: 10, pitch: 110, special: true, label: 'LAUNCHER' }
 };
 const keys = {};
 const padPrev = [{}, {}];
@@ -259,9 +270,13 @@ class Fighter {
     data.end = Math.max(data.start, Math.min(data.dur - 1, Math.round(data.end * dm)));
     if (type === 'upper') Object.assign(data, this.char.upper);
     if (type === 'dive') Object.assign(data, this.char.dive);
+    if (type === 'rush') Object.assign(data, this.char.rush);
+    if (type === 'launcher') Object.assign(data, this.char.launcher);
     this.attack = { type, frame: 0, hit: false, data };
     if (type === 'upper') { this.vy = -11; this.onGround = false; }
     if (type === 'dive') { this.vy = 7; this.onGround = false; }
+    if (type === 'rush') this.vx = this.facing * (this.char.rush.speed || 8);
+    if (type === 'launcher') { this.vy = -12; this.onGround = false; }
     sfx(type === 'lp' || type === 'lk' || type === 'clp' ? 'lp' : 'hp');
   }
   canCancel() { return this.attack && this.attack.hit && this.attack.data.cancel; }
@@ -324,7 +339,10 @@ class Fighter {
       const a = this.attack.data;
       if (this.canCancel()) {
         const next = pickAttack(inp, this, true);
-        if (next) { this.attack = null; this.startAttack(next); }
+        if (next) {
+          if (next === 'rush' || next === 'launcher') this.meter -= 20;
+          this.attack = null; this.startAttack(next);
+        }
       }
       if (this.attack) {
         this.attack.frame++;
@@ -346,6 +364,7 @@ class Fighter {
           }
         }
         if (this.attack.type === 'upper' && f >= a.start && f <= a.end) this.vy = Math.min(this.vy, -7);
+        if (this.attack.type === 'rush' && f > a.end) this.vx = 0;
         if (f >= a.dur) this.attack = null;
       }
       this.applyPhysics();
@@ -365,6 +384,7 @@ class Fighter {
           color: '#b9a68f', size: 2 + Math.random() * 3 });
       }
       const chosen = pickAttack(inp, this, false);
+      if (chosen === 'rush' || chosen === 'launcher') this.meter -= 20;
       if (chosen) this.startAttack(chosen);
       else if (inp.sp && !this.prev.sp && this.onGround && this.meter >= 25) {
         this.meter -= 25;
@@ -382,8 +402,11 @@ class Fighter {
 
 function pickAttack(inp, f, cancelMode) {
   const edge = name => cancelMode ? !!inp[name] : !!inp[name] && !f.prev[name];
-  if (inp.sp && !f.prev.sp && !f.onGround && inp.down) return 'dive';
-  if (inp.sp && !f.prev.sp && f.onGround && inp.up) return 'upper';
+  const spEdge = cancelMode ? !!inp.sp : !!inp.sp && !f.prev.sp;
+  if (spEdge && f.onGround && f.meter >= 20 && inp.hp) return 'rush';
+  if (spEdge && f.onGround && f.meter >= 20 && inp.hk) return 'launcher';
+  if (spEdge && !f.onGround && inp.down) return 'dive';
+  if (spEdge && f.onGround && inp.up) return 'upper';
   if (edge('hp')) return f.onGround ? (f.crouching ? 'chp' : 'hp') : 'jhp';
   if (edge('hk')) return f.onGround ? (f.crouching ? 'sweep' : 'hk') : 'jhp';
   if (edge('lp')) return f.onGround ? (f.crouching ? 'clp' : 'lp') : 'jlp';
@@ -400,13 +423,14 @@ function aiBrain(f, opp) {
   f.ai.timer--;
   if (f.ai.block > 0) { f.ai.block--; inp[away] = true; return inp; }
   if (f.oppAttack && dist < 130 && Math.random() < DIFF.block) { f.ai.block = 18; inp[away] = true; return inp; }
+  if (f.oppAir && dist < 130 && f.meter >= 20 && Math.random() < DIFF.anti * .45) { inp.hk = true; inp.sp = true; f.ai.action = 'idle'; f.ai.timer = DIFF.react; return inp; }
   if (f.oppAir && dist < 150 && f.meter >= 25 && Math.random() < DIFF.anti) { inp.up = true; inp.sp = true; f.ai.timer = DIFF.react; return inp; }
   if (f.ai.timer <= 0) {
     f.ai.timer = DIFF.react + Math.floor(Math.random() * 8);
     const r = Math.random();
     if (opp.hitstun > 0 && dist < 110 && r < DIFF.combo) f.ai.action = 'combo';
     else if (dist > 210) f.ai.action = r < .65 ? 'move' : (r < .85 && f.meter >= 25 ? 'fire' : 'idle');
-    else if (dist > 100) f.ai.action = r < DIFF.aggro ? 'move' : r < .75 ? 'attack' : r < .88 ? 'jump' : 'fire';
+    else if (dist > 100) f.ai.action = f.meter >= 20 && r < DIFF.combo * .4 ? 'rush' : r < DIFF.aggro ? 'move' : r < .75 ? 'attack' : r < .88 ? 'jump' : 'fire';
     else f.ai.action = r < DIFF.aggro ? 'attack' : r < .8 ? 'block' : r < .92 ? 'jump' : 'retreat';
     f.ai.move = Math.random() < .5 ? 'lp' : 'hk';
   }
@@ -416,6 +440,8 @@ function aiBrain(f, opp) {
     case 'jump': if (f.onGround) inp.up = true; inp[toward] = true; f.ai.timer = 8; break;
     case 'attack': if (dist < 115 && f.onGround && !f.attack) inp[f.ai.move] = true; break;
     case 'combo': if (dist < 105 && f.onGround && !f.attack) inp.lp = true; else if (f.attack && f.attack.hit) inp.hp = true; break;
+    case 'rush': if (f.meter >= 20 && f.onGround && !f.attack) inp.hp = inp.sp = true; f.ai.action = 'idle'; break;
+    case 'launcher': if (f.meter >= 20 && f.onGround && !f.attack) inp.hk = inp.sp = true; f.ai.action = 'idle'; break;
     case 'fire': if (f.meter >= 25 && f.onGround && !f.attack) inp.sp = true; f.ai.action = 'idle'; break;
     case 'block': f.ai.block = 20; f.ai.action = 'idle'; break;
   }
@@ -849,7 +875,7 @@ function drawFighter(f) {
   ctx.scale(f.facing, 1);
   const flash = f.flash > 0 && Math.floor(f.flash / 2) % 2 === 0;
   const C = col => flash ? '#ffffff' : col;
-  const build = f.charIndex === 1 ? .86 : f.charIndex === 2 ? 1.16 : 1;
+  const build = f.char.build || 1;
   const bw = 20 * build;
   const limbW = 15 * build;
   const crouch = f.crouching ? 1 : 0;
@@ -866,7 +892,7 @@ function drawFighter(f) {
   ctx.fillRect(-25 * build - walkLeg, -8, 18 * build, 8); ctx.fillRect(9 * build + walkLeg, -8, 18 * build, 8);
   ctx.fillStyle = C(f.char.color);
   ctx.beginPath(); ctx.moveTo(-bw, shoulderY); ctx.lineTo(bw, shoulderY); ctx.lineTo(bw + 4, hipY + 4); ctx.lineTo(-bw - 4, hipY + 4); ctx.closePath(); ctx.fill();
-  ctx.fillStyle = C('#ffffff'); ctx.fillRect(-bw - 4, hipY - 8, (bw + 4) * 2, 10);
+  ctx.fillStyle = C(f.char.trim || '#ffffff'); ctx.fillRect(-bw - 4, hipY - 8, (bw + 4) * 2, 10);
   ctx.fillStyle = C('#111'); ctx.fillRect(-5, hipY - 9, 10, 12);
   ctx.fillStyle = C(f.char.color);
   ctx.beginPath(); ctx.moveTo(-bw, shoulderY); ctx.lineTo(-6, shoulderY + 26); ctx.lineTo(6, shoulderY + 26); ctx.lineTo(bw, shoulderY); ctx.fill();
@@ -887,6 +913,8 @@ function drawFighter(f) {
       ctx.beginPath();
       const a = f.attack.data;
       if (f.attack.type === 'upper') ctx.arc(12, shoulderY - 22, a.reach * .55, -1.5, .45);
+      else if (f.attack.type === 'launcher') ctx.arc(12, shoulderY - 34, a.reach * .7, -1.6, .5);
+      else if (f.attack.type === 'rush') ctx.arc(10, shoulderY + 8, a.reach * .85, -.75, .7);
       else if (f.attack.type === 'dive') ctx.arc(14, shoulderY + 26, a.reach * .6, -1.1, .8);
       else ctx.arc(10, shoulderY + (a.low ? 22 : a.air ? 18 : 8), a.reach * .72, -.95, .85);
       ctx.stroke();
@@ -902,6 +930,18 @@ function drawFighter(f) {
   ctx.fillStyle = C('#201820'); ctx.beginPath(); ctx.arc(0, headY - 4, 17, Math.PI, Math.PI * 2); ctx.fill(); ctx.fillRect(-17, headY - 6, 7, 12);
   ctx.fillStyle = C('#111'); ctx.fillRect(4, headY - 2, 6, 3);
   ctx.strokeStyle = C('#a33'); ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(6, headY + 9); ctx.lineTo(13, headY + 8); ctx.stroke();
+  if (f.charIndex === 3) {
+    ctx.fillStyle = C('#15151c'); ctx.fillRect(-17, headY - 11, 34, 6);
+    ctx.strokeStyle = C(f.char.trim || '#fff3bf'); ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(-15, headY - 10); ctx.lineTo(-38, headY - 16 + Math.sin(frameCount / 5) * 4); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-15, headY - 6); ctx.lineTo(-33, headY + 1 + Math.sin(frameCount / 5 + 1) * 4); ctx.stroke();
+  }
+  if (f.charIndex === 4) {
+    ctx.fillStyle = C('#d8d8e0');
+    ctx.beginPath(); ctx.moveTo(-bw - 2, shoulderY + 4); ctx.lineTo(-bw - 20, shoulderY - 12); ctx.lineTo(-bw - 4, shoulderY + 14); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(bw + 2, shoulderY + 4); ctx.lineTo(bw + 20, shoulderY - 12); ctx.lineTo(bw + 4, shoulderY + 14); ctx.fill();
+    ctx.fillStyle = C('#ff5ac8'); ctx.fillRect(4, headY - 2, 6, 3);
+  }
   if (f.meter >= 100) {
     ctx.fillStyle = 'rgba(255,220,80,' + (.3 + .25 * Math.sin(frameCount / 6)) + ')';
     ctx.beginPath(); ctx.arc(0, headY - 22, 22, 0, Math.PI * 2); ctx.fill();
