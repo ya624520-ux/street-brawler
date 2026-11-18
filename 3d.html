@@ -191,14 +191,16 @@ function makeFighterMesh(color, trim) {
   parts.head.position.set(0, 2.75, 0); parts.head.castShadow = true; g.add(parts.head);
   parts.hair = new THREE.Mesh(new THREE.SphereGeometry(.39, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2), dark);
   parts.hair.position.set(0, 2.8, 0); g.add(parts.hair);
-  parts.armL = new THREE.Group(); parts.armL.position.set(-.62, 2.32, 0);
-  box(.26, .9, .26, main, 0, -.45, 0, parts.armL);
-  const handL = new THREE.Mesh(new THREE.SphereGeometry(.17, 10, 8), skin); handL.position.y = -.95; parts.armL.add(handL);
+  parts.armL = new THREE.Group(); parts.armL.position.set(-.62, 2.32, -.38);
+  box(.28, .9, .28, main, 0, -.45, 0, parts.armL);
+  const handL = new THREE.Mesh(new THREE.SphereGeometry(.2, 10, 8), skin); handL.position.set(0, -.95, .06); parts.armL.add(handL);
   g.add(parts.armL);
-  parts.armR = new THREE.Group(); parts.armR.position.set(.62, 2.32, 0);
-  box(.26, .9, .26, main, 0, -.45, 0, parts.armR);
-  const handR = new THREE.Mesh(new THREE.SphereGeometry(.17, 10, 8), skin); handR.position.y = -.95; parts.armR.add(handR);
+  parts.armR = new THREE.Group(); parts.armR.position.set(.62, 2.32, .4);
+  box(.28, .9, .28, main, 0, -.45, 0, parts.armR);
+  const handR = new THREE.Mesh(new THREE.SphereGeometry(.2, 10, 8), skin); handR.position.set(0, -.95, .06); parts.armR.add(handR);
   g.add(parts.armR);
+  parts.trail = new THREE.Mesh(new THREE.SphereGeometry(.26, 12, 8), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: .75 }));
+  parts.trail.visible = false; g.add(parts.trail);
   parts.legL = new THREE.Group(); parts.legL.position.set(-.28, 1.28, 0);
   box(.34, 1.05, .34, dark, 0, -.52, 0, parts.legL);
   box(.42, .16, .55, light, 0, -1.05, .1, parts.legL);
@@ -222,18 +224,23 @@ function animateFighterMesh(f, idx) {
   const p = ud.parts;
   mesh.position.set(wx(f.x), wy(f.y), 0);
   mesh.rotation.set(0, f.facing === 1 ? 0 : Math.PI, 0);
-  mesh.scale.set(1, f.crouching ? .78 : 1, 1);
+  const sx = f.charIndex === 1 ? .88 : f.charIndex === 2 ? 1.14 : 1;
+  mesh.scale.set(sx, f.crouching ? .78 : 1, 1);
+  ud.parts.trail.material.color.set(f.char.color);
   if (f.state === 'ko') mesh.rotation.z = -f.facing * (Math.PI / 2) * Math.min(1, f.koTime / 18);
   const walk = f.state === 'walk' ? Math.sin(frameCount / 5) * .5 : 0;
   p.legL.rotation.x = walk; p.legR.rotation.x = -walk;
   p.armL.rotation.z = .12; p.armR.rotation.z = -.12;
-  p.torso.rotation.z = 0;
+  p.torso.rotation.z = f.charIndex === 2 ? -.08 : f.charIndex === 1 ? .05 : 0;
+  if (f.charIndex === 1 && (f.state === 'idle' || f.state === 'walk')) p.armR.rotation.z = -.4;
+  if (f.charIndex === 2 && (f.state === 'idle' || f.state === 'walk')) { p.armL.rotation.z = -.25; p.armR.rotation.z = -.35; }
   if (!f.onGround) {
     p.legL.rotation.x = -.6; p.legR.rotation.x = .35;
     p.armL.rotation.z = .8; p.armR.rotation.z = -.9;
   }
   if (f.blocking) { p.armL.rotation.z = -1.1; p.armR.rotation.z = 1.1; }
   if (f.state === 'hit') p.torso.rotation.z = .22;
+  p.trail.visible = false;
   if (f.attack) {
     const a = f.attack.data, fr = f.attack.frame;
     let ext = 0;
@@ -243,6 +250,14 @@ function animateFighterMesh(f, idx) {
     if (f.attack.type === 'upper') { p.armR.rotation.z = -2.4 * ext; p.torso.rotation.z = -.2; }
     else if (f.attack.type === 'dive') { p.armR.rotation.z = -1.6 * ext; p.legR.rotation.x = 1.1 * ext; }
     else { p.armR.rotation.z = -1.5 * ext; p.torso.rotation.z = -.12 * ext; }
+    if (ext > .04) {
+      p.trail.visible = true;
+      const tx = f.attack.type === 'upper' ? .45 : f.attack.type === 'dive' ? 1.15 : a.reach / 40 * .62;
+      const ty = f.attack.type === 'upper' ? 3.15 : f.attack.type === 'dive' ? 1.5 : a.low ? 1.1 : a.air ? 2 : 2.25;
+      p.trail.position.set(tx, ty, .55);
+      p.trail.scale.setScalar(.7 + ext * (f.charIndex === 2 ? 1.35 : 1));
+      p.trail.material.opacity = .25 + ext * .5;
+    }
   }
   const glow = f.flash > 0 && Math.floor(f.flash / 2) % 2 === 0 ? 0x666666 : 0x000000;
   ud.main.emissive.setHex(glow); ud.light.emissive.setHex(glow);
