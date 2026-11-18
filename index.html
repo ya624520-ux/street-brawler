@@ -269,7 +269,17 @@ class Fighter {
     this.x += this.vx; this.y += this.vy;
     if (!this.onGround) {
       this.vy += .72;
-      if (this.y >= GROUND) { this.y = GROUND; this.vy = 0; this.onGround = true; }
+      if (this.y >= GROUND) {
+        const impact = this.vy;
+        this.y = GROUND; this.vy = 0; this.onGround = true;
+        if (impact > 3) {
+          for (let i = 0; i < 7; i++) {
+            particles.push({ x: this.x + (Math.random() - .5) * 30, y: GROUND - 2,
+              vx: (Math.random() - .5) * 4, vy: -Math.random() * 2.5,
+              life: 14 + Math.random() * 8, color: '#c9b59b', size: 2 + Math.random() * 3 });
+          }
+        }
+      }
     }
     this.x = Math.max(46, Math.min(W - 46, this.x));
   }
@@ -349,6 +359,11 @@ class Fighter {
         if (inp.right) this.vx = Math.min(this.vx + .35, 5.5);
       }
       if (this.crouching) this.vx = 0;
+      if (this.onGround && this.vx !== 0 && frameCount % 7 === 0) {
+        particles.push({ x: this.x - this.vx * 1.5, y: GROUND - 3,
+          vx: -this.vx * .35, vy: -1 - Math.random(), life: 12 + Math.random() * 8,
+          color: '#b9a68f', size: 2 + Math.random() * 3 });
+      }
       const chosen = pickAttack(inp, this, false);
       if (chosen) this.startAttack(chosen);
       else if (inp.sp && !this.prev.sp && this.onGround && this.meter >= 25) {
@@ -765,6 +780,15 @@ function drawBackground() {
   const g = ctx.createLinearGradient(0, 0, 0, GROUND);
   g.addColorStop(0, top); g.addColorStop(.55, mid); g.addColorStop(1, bot);
   ctx.fillStyle = g; ctx.fillRect(0, 0, W, GROUND);
+  if (st === 0 || st === 2) {
+    ctx.fillStyle = st === 0 ? 'rgba(255,220,190,.13)' : 'rgba(255,255,255,.09)';
+    for (let i = 0; i < 5; i++) {
+      const cx = ((frameCount * .18 + i * 260) % (W + 200)) - 100;
+      const cy = 95 + (i % 3) * 58;
+      ctx.beginPath(); ctx.ellipse(cx, cy, 68, 17, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(cx + 44, cy - 10, 42, 14, 0, 0, Math.PI * 2); ctx.fill();
+    }
+  }
   if (st === 0) {
     ctx.fillStyle = '#ffd978'; ctx.beginPath(); ctx.arc(W / 2, 210, 78, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#6b2d55'; ctx.beginPath(); ctx.moveTo(0, GROUND); ctx.lineTo(0, 320); ctx.lineTo(130, 200); ctx.lineTo(250, 330); ctx.lineTo(360, 240); ctx.lineTo(500, GROUND); ctx.fill();
@@ -810,38 +834,55 @@ function drawFighter(f) {
   ctx.scale(f.facing, 1);
   const flash = f.flash > 0 && Math.floor(f.flash / 2) % 2 === 0;
   const C = col => flash ? '#ffffff' : col;
+  const build = f.charIndex === 1 ? .86 : f.charIndex === 2 ? 1.16 : 1;
+  const bw = 20 * build;
+  const limbW = 15 * build;
   const crouch = f.crouching ? 1 : 0;
-  const bob = f.state === 'walk' ? Math.sin(frameCount / 5) * 2.5 : 0;
+  const bob = f.state === 'walk' ? Math.sin(frameCount / 5) * 2.5 : f.state === 'idle' ? Math.sin(frameCount / 18) * 1.2 : 0;
   const walkLeg = f.state === 'walk' ? Math.sin(frameCount / 5) * 12 : 0;
   const hipY = -60 + crouch * 22 + bob;
   const shoulderY = hipY - 42;
   const headY = -116 + crouch * 30 + bob;
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  ctx.strokeStyle = C('#2b2b38'); ctx.lineWidth = 15;
-  ctx.beginPath(); ctx.moveTo(-9, hipY); ctx.lineTo(-14 - walkLeg * .5, hipY / 2); ctx.lineTo(-16 - walkLeg, -2); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(9, hipY); ctx.lineTo(14 + walkLeg * .5, hipY / 2); ctx.lineTo(16 + walkLeg, -2); ctx.stroke();
-  ctx.fillStyle = C('#f0f0f0'); ctx.fillRect(-24 - walkLeg, -8, 18, 8); ctx.fillRect(8 + walkLeg, -8, 18, 8);
+  ctx.strokeStyle = C('#2b2b38'); ctx.lineWidth = limbW;
+  ctx.beginPath(); ctx.moveTo(-9 * build, hipY); ctx.lineTo(-14 * build - walkLeg * .5, hipY / 2); ctx.lineTo(-16 * build - walkLeg, -2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(9 * build, hipY); ctx.lineTo(14 * build + walkLeg * .5, hipY / 2); ctx.lineTo(16 * build + walkLeg, -2); ctx.stroke();
+  ctx.fillStyle = C('#f0f0f0');
+  ctx.fillRect(-25 * build - walkLeg, -8, 18 * build, 8); ctx.fillRect(9 * build + walkLeg, -8, 18 * build, 8);
   ctx.fillStyle = C(f.char.color);
-  ctx.beginPath(); ctx.moveTo(-20, shoulderY); ctx.lineTo(20, shoulderY); ctx.lineTo(24, hipY + 4); ctx.lineTo(-24, hipY + 4); ctx.closePath(); ctx.fill();
-  ctx.fillStyle = C('#ffffff'); ctx.fillRect(-24, hipY - 8, 48, 10);
+  ctx.beginPath(); ctx.moveTo(-bw, shoulderY); ctx.lineTo(bw, shoulderY); ctx.lineTo(bw + 4, hipY + 4); ctx.lineTo(-bw - 4, hipY + 4); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = C('#ffffff'); ctx.fillRect(-bw - 4, hipY - 8, (bw + 4) * 2, 10);
   ctx.fillStyle = C('#111'); ctx.fillRect(-5, hipY - 9, 10, 12);
   ctx.fillStyle = C(f.char.color);
-  ctx.beginPath(); ctx.moveTo(-20, shoulderY); ctx.lineTo(-6, shoulderY + 26); ctx.lineTo(6, shoulderY + 26); ctx.lineTo(20, shoulderY); ctx.fill();
-  let hx = 20, hy = shoulderY + 16;
+  ctx.beginPath(); ctx.moveTo(-bw, shoulderY); ctx.lineTo(-6, shoulderY + 26); ctx.lineTo(6, shoulderY + 26); ctx.lineTo(bw, shoulderY); ctx.fill();
+  let hx = 20 + (f.charIndex === 1 ? 7 : 0), hy = shoulderY + 16 - (f.charIndex === 1 ? 7 : 0);
+  let ext = 0;
   if (f.attack) {
     const a = f.attack.data, fr = f.attack.frame;
-    let ext = 0;
     if (fr < a.start) ext = fr / a.start;
     else if (fr <= a.end) ext = 1;
     else ext = Math.max(0, 1 - (fr - a.end) / Math.max(1, a.dur - a.end));
     if (f.attack.type === 'upper') { hx = 14; hy = shoulderY - 56 * ext; }
     else { hx = 20 + ext * a.reach * .85; hy = shoulderY + 10 + ext * (a.air ? 22 : a.low ? 26 : -6); }
+    if (ext > .05) {
+      ctx.save();
+      ctx.globalAlpha = .22 + ext * .48;
+      ctx.strokeStyle = C(f.char.color);
+      ctx.lineWidth = (f.charIndex === 2 ? 14 : 9) * ext;
+      ctx.beginPath();
+      const a = f.attack.data;
+      if (f.attack.type === 'upper') ctx.arc(12, shoulderY - 22, a.reach * .55, -1.5, .45);
+      else if (f.attack.type === 'dive') ctx.arc(14, shoulderY + 26, a.reach * .6, -1.1, .8);
+      else ctx.arc(10, shoulderY + (a.low ? 22 : a.air ? 18 : 8), a.reach * .72, -.95, .85);
+      ctx.stroke();
+      ctx.restore();
+    }
   }
   if (f.blocking) { hx = 27; hy = shoulderY + 4; }
-  ctx.strokeStyle = C(f.char.color); ctx.lineWidth = 12;
-  ctx.beginPath(); ctx.moveTo(-16, shoulderY + 6); ctx.lineTo(-24, shoulderY + 26); ctx.lineTo(f.blocking ? 14 : -6, shoulderY + (f.blocking ? 8 : 34)); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(16, shoulderY + 6); ctx.lineTo((hx + 16) / 2, shoulderY + 2); ctx.lineTo(hx, hy); ctx.stroke();
-  ctx.fillStyle = C('#e8b48a'); ctx.beginPath(); ctx.arc(hx, hy, 7, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = C(f.char.color); ctx.lineWidth = 12 * build;
+  ctx.beginPath(); ctx.moveTo(-bw + 4, shoulderY + 6); ctx.lineTo(-bw - 6, shoulderY + 26); ctx.lineTo(f.blocking ? 14 : -6, shoulderY + (f.blocking ? 8 : 34)); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(bw - 4, shoulderY + 6); ctx.lineTo((hx + bw - 4) / 2, shoulderY + 2); ctx.lineTo(hx, hy); ctx.stroke();
+  ctx.fillStyle = C('#e8b48a'); ctx.beginPath(); ctx.arc(hx, hy, 9 * build, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = C('#e8b48a'); ctx.beginPath(); ctx.arc(0, headY, 17, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = C('#201820'); ctx.beginPath(); ctx.arc(0, headY - 4, 17, Math.PI, Math.PI * 2); ctx.fill(); ctx.fillRect(-17, headY - 6, 7, 12);
   ctx.fillStyle = C('#111'); ctx.fillRect(4, headY - 2, 6, 3);
