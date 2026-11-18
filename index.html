@@ -75,7 +75,7 @@
       <button class="act" data-k="l">SP</button>
     </div>
   </div>
-  <div id="hint">Hold away to block. P1: A/D move, W jump, S crouch, J/U/K/I attacks, L special. P2: arrows + 1/2/3/4/5. Up+L uppercut, Down+L dive/fireball. M mute, Esc menu.</div>
+  <div id="hint">Gamepad: stick/D-pad move, A/B/X/Y attacks, R1/R2 special, Start menu (P1 = first pad, P2 = second). Keys: hold away to block; P1 A/D/W/S + J/U/K/I/L, P2 arrows + 1/2/3/4/5. Up+L uppercut, Down+L dive/fireball. M mute, Esc menu.</div>
 </div>
 <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 <script>
@@ -83,9 +83,12 @@ const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 const W = 960, H = 540, GROUND = 448;
 const CHARS = [
-  { name: 'RED', color: '#e74c3c', trim: '#ffd9d2', speed: 3.5, power: 1.0 },
-  { name: 'BLUE', color: '#3498db', trim: '#d6ecff', speed: 4.1, power: 0.85 },
-  { name: 'GREEN', color: '#2ecc71', trim: '#d9ffe8', speed: 2.9, power: 1.28 }
+  { name: 'RED', style: 'BRAWLER', color: '#e74c3c', trim: '#ffd9d2', speed: 3.5, power: 1.0, durMod: 1,
+    fb: { dmg: 15, speed: 8.5, r: 17, color: '#6cf' }, upper: { invuln: 7, dmg: 18, kb: 9 }, dive: { dmg: 13, reach: 74 } },
+  { name: 'BLUE', style: 'SPEEDSTER', color: '#3498db', trim: '#d6ecff', speed: 4.1, power: .85, durMod: .84,
+    fb: { dmg: 10, speed: 11, r: 13, color: '#8df' }, upper: { invuln: 10, dmg: 13, kb: 6 }, dive: { dmg: 12, reach: 86 } },
+  { name: 'GREEN', style: 'HEAVYWEIGHT', color: '#2ecc71', trim: '#d9ffe8', speed: 2.9, power: 1.28, durMod: 1.12,
+    fb: { dmg: 19, speed: 6.5, r: 22, color: '#fd6' }, upper: { invuln: 4, dmg: 15, kb: 12 }, dive: { dmg: 16, reach: 66 } }
 ];
 const STAGES = ['ROOFTOP', 'NEON CITY', 'TEMPLE'];
 const DIFFS = [
@@ -107,6 +110,9 @@ const A = {
   dive: { dur: 32, start: 6, end: 23, dmg: 13, reach: 74, stun: 24, kb: 6, pitch: 140, special: true, air: true, label: 'DIVE' }
 };
 const keys = {};
+const padPrev = [{}, {}];
+let padInputs = [null, null];
+const padConnected = [false, false];
 let audioCtx = null, muted = false, musicAcc = 0, musicStep = 0;
 const bass = [55, 55, 82.4, 73.4, 55, 55, 98, 82.4];
 
@@ -132,6 +138,40 @@ function sfx(name) {
   else if (name === 'ko') { tone(110, .45, 'sawtooth', .09); tone(70, .6, 'square', .05, .08); }
   else if (name === 'bell') { tone(660, .18, 'sine', .06); tone(880, .22, 'sine', .04, .06); }
   else if (name === 'menu') tone(440, .06, 'square', .03);
+}
+function pollPads() {
+  const res = [null, null];
+  if (typeof navigator === 'undefined' || !navigator.getGamepads) return res;
+  let pads = [];
+  try { pads = navigator.getGamepads(); } catch (err) { return res; }
+  let slot = 0;
+  for (let i = 0; i < pads.length && slot < 2; i++) {
+    const gp = pads[i];
+    if (!gp) continue;
+    const idx = slot++;
+    const btn = n => !!(gp.buttons[n] && gp.buttons[n].pressed);
+    const edge = n => {
+      const pressed = btn(n);
+      const rising = pressed && !padPrev[idx][n];
+      padPrev[idx][n] = pressed;
+      return rising;
+    };
+    const ax = gp.axes || [];
+    const r1 = edge(5), rt = edge(7);
+    res[idx] = {
+      left: btn(12) || ax[0] < -.35,
+      right: btn(14) || ax[0] > .35,
+      up: btn(13) || ax[1] < -.35,
+      down: btn(15) || ax[1] > .35,
+      lp: edge(0), hp: edge(2), lk: edge(1), hk: edge(3), sp: r1 || rt,
+      start: edge(9)
+    };
+    if (!padConnected[idx]) { padConnected[idx] = true; toast('Controller ' + (idx + 1) + ' connected'); }
+  }
+  for (let i = 0; i < 2; i++) {
+    if (!res[i] && padConnected[i]) { padConnected[i] = false; toast('Controller ' + (i + 1) + ' disconnected'); }
+  }
+  return res;
 }
 function updateMusic() {
   if (!audioCtx || muted || phase === 'menu') return;
@@ -178,7 +218,7 @@ function backToMenu() {
 document.getElementById('menuBtn').addEventListener('click', () => { initAudio(); backToMenu(); });
 
 const c1 = document.getElementById('c1'), c2 = document.getElementById('c2'), stageSel = document.getElementById('stageSel');
-CHARS.forEach((c, i) => { c1.add(new Option(c.name, i)); c2.add(new Option(c.name, i)); });
+CHARS.forEach((c, i) => { const label = c.name + ' - ' + c.style; c1.add(new Option(label, i)); c2.add(new Option(label, i)); });
 c2.options[1].selected = true;
 STAGES.forEach((s, i) => stageSel.add(new Option(s, i)));
 
@@ -208,12 +248,19 @@ class Fighter {
     this.tx = this.x; this.ty = this.y;
   }
   startAttack(type) {
-    this.attack = { type, frame: 0, hit: false };
+    const data = Object.assign({}, A[type]);
+    const dm = this.char.durMod || 1;
+    data.dur = Math.round(data.dur * dm);
+    data.start = Math.max(1, Math.round(data.start * dm));
+    data.end = Math.max(data.start, Math.min(data.dur - 1, Math.round(data.end * dm)));
+    if (type === 'upper') Object.assign(data, this.char.upper);
+    if (type === 'dive') Object.assign(data, this.char.dive);
+    this.attack = { type, frame: 0, hit: false, data };
     if (type === 'upper') { this.vy = -11; this.onGround = false; }
     if (type === 'dive') { this.vy = 7; this.onGround = false; }
     sfx(type === 'lp' || type === 'lk' || type === 'clp' ? 'lp' : 'hp');
   }
-  canCancel() { return this.attack && this.attack.hit && A[this.attack.type].cancel; }
+  canCancel() { return this.attack && this.attack.hit && this.attack.data.cancel; }
   applyPhysics() {
     this.x += this.vx; this.y += this.vy;
     if (!this.onGround) {
@@ -223,7 +270,7 @@ class Fighter {
     this.x = Math.max(46, Math.min(W - 46, this.x));
   }
   takeHit(a, attacker, local) {
-    const inv = this.attack && A[this.attack.type].invuln && this.attack.frame <= A[this.attack.type].invuln;
+    const inv = this.attack && this.attack.data.invuln && this.attack.frame <= this.attack.data.invuln;
     if (inv && !a.special) return false;
     const dmg = Math.round(a.dmg * (attacker.char ? attacker.char.power : 1));
     if (this.blocking && this.onGround) {
@@ -260,7 +307,7 @@ class Fighter {
     if (this.hitstun > 0) {
       this.hitstun--; this.vx *= .88; this.applyPhysics();
     } else if (this.attack) {
-      const a = A[this.attack.type];
+      const a = this.attack.data;
       if (this.canCancel()) {
         const next = pickAttack(inp, this, true);
         if (next) { this.attack = null; this.startAttack(next); }
@@ -302,7 +349,8 @@ class Fighter {
       if (chosen) this.startAttack(chosen);
       else if (inp.sp && !this.prev.sp && this.onGround && this.meter >= 25) {
         this.meter -= 25;
-        fireballs.push({ x: this.x + this.facing * 50, y: this.y - 92, vx: this.facing * 8.5, owner: this, dmg: 15, life: 150, r: 17 });
+        const fb = this.char.fb;
+        fireballs.push({ x: this.x + this.facing * 50, y: this.y - 92, vx: this.facing * fb.speed, owner: this, dmg: fb.dmg, life: 150, r: fb.r, color: fb.color });
         sfx('special');
       } else if (inp.sp && !this.prev.sp && this.onGround && this.meter < 25) tone(120, .08, 'square', .02);
       this.applyPhysics();
@@ -356,16 +404,23 @@ function aiBrain(f, opp) {
 }
 
 function playerInput(side) {
-  if (side === 0) return {
+  const inp = side === 0 ? {
     left: !!keys['a'], right: !!keys['d'],
     up: !!keys['w'], down: !!keys['s'],
     lp: !!keys['j'], hp: !!keys['k'], lk: !!keys['u'], hk: !!keys['i'], sp: !!keys['l']
-  };
-  return {
+  } : {
     left: !!keys['arrowleft'], right: !!keys['arrowright'],
     up: !!keys['arrowup'], down: !!keys['arrowdown'],
     lp: !!keys['1'], hp: !!keys['2'], lk: !!keys['3'], hk: !!keys['4'], sp: !!keys['5']
   };
+  const g = padInputs[side];
+  if (g) {
+    inp.left = inp.left || g.left; inp.right = inp.right || g.right;
+    inp.up = inp.up || g.up; inp.down = inp.down || g.down;
+    inp.lp = inp.lp || g.lp; inp.hp = inp.hp || g.hp;
+    inp.lk = inp.lk || g.lk; inp.hk = inp.hk || g.hk; inp.sp = inp.sp || g.sp;
+  }
+  return inp;
 }
 
 let p, e, fireballs = [], particles = [], texts = [], rings = [];
@@ -491,7 +546,7 @@ function snapshotSide(f) {
     x: f.x, y: f.y, vx: f.vx, vy: f.vy, hp: f.hp, meter: f.meter,
     facing: f.facing, onGround: f.onGround, crouching: f.crouching, blocking: f.blocking,
     state: f.state, koTime: f.koTime, combo: f.combo,
-    attack: f.attack ? { type: f.attack.type, frame: f.attack.frame, hit: f.attack.hit } : null,
+    attack: f.attack ? { type: f.attack.type, frame: f.attack.frame, hit: f.attack.hit, data: f.attack.data } : null,
     charIndex: f.charIndex
   };
 }
@@ -503,11 +558,11 @@ function applySnapshot(d) {
     f.hp = s.hp; f.meter = s.meter; f.facing = s.facing;
     f.onGround = s.onGround; f.crouching = s.crouching; f.blocking = s.blocking;
     f.state = s.state; f.koTime = s.koTime; f.combo = s.combo;
-    f.attack = s.attack ? { type: s.attack.type, frame: s.attack.frame, hit: s.attack.hit } : null;
+    f.attack = s.attack ? { type: s.attack.type, frame: s.attack.frame, hit: s.attack.hit, data: s.attack.data || Object.assign({}, A[s.attack.type]) } : null;
     if (s.charIndex !== undefined && s.charIndex !== f.charIndex) f.setChar(s.charIndex);
   };
   apply(e, d.s[0]); apply(p, d.s[1]);
-  fireballs = (d.fb || []).map(b => ({ x: b.x, y: b.y, vx: b.vx, dmg: b.dmg, life: b.life, r: b.r, owner: b.side === 0 ? e : p }));
+  fireballs = (d.fb || []).map(b => ({ x: b.x, y: b.y, vx: b.vx, dmg: b.dmg, life: b.life, r: b.r, color: b.color, owner: b.side === 0 ? e : p }));
   for (const ev of (d.ev || [])) impactFX(ev.x, ev.y, ev.color, ev.dmg, ev.kind);
 }
 function onNetData(d) {
@@ -543,6 +598,8 @@ function updateGuest() {
 
 function update() {
   frameCount++;
+  padInputs = pollPads();
+  if (padInputs[0] && padInputs[0].start && phase !== 'menu') backToMenu();
   updateMusic();
   if (phase === 'menu') return;
   if (mode === 'online' && !isHost) { updateGuest(); return; }
@@ -601,7 +658,7 @@ function update() {
     send({
       type: 'snap', phase, phaseTimer, msg, timeLeft, winsP, winsE, round,
       s: [snapshotSide(p), snapshotSide(e)],
-      fb: fireballs.map(b => ({ x: b.x, y: b.y, vx: b.vx, dmg: b.dmg, life: b.life, r: b.r, side: b.owner.side })),
+      fb: fireballs.map(b => ({ x: b.x, y: b.y, vx: b.vx, dmg: b.dmg, life: b.life, r: b.r, color: b.color, side: b.owner.side })),
       ev: netEvents
     });
     netEvents = [];
@@ -681,7 +738,7 @@ function drawFighter(f) {
   ctx.beginPath(); ctx.moveTo(-20, shoulderY); ctx.lineTo(-6, shoulderY + 26); ctx.lineTo(6, shoulderY + 26); ctx.lineTo(20, shoulderY); ctx.fill();
   let hx = 20, hy = shoulderY + 16;
   if (f.attack) {
-    const a = A[f.attack.type], fr = f.attack.frame;
+    const a = f.attack.data, fr = f.attack.frame;
     let ext = 0;
     if (fr < a.start) ext = fr / a.start;
     else if (fr <= a.end) ext = 1;
@@ -717,8 +774,8 @@ function drawHUD() {
   drawBar(30, 58, 250, 10, p.meter, 100, '#fbbf24', false);
   drawBar(W - 280, 58, 250, 10, e.meter, 100, '#fbbf24', true);
   ctx.fillStyle = '#fff'; ctx.font = 'bold 18px Arial'; ctx.textAlign = 'left';
-  ctx.fillText(p.char.name + ' (P1)', 30, 22);
-  ctx.textAlign = 'right'; ctx.fillText(e.char.name + ' (P2)', W - 30, 22);
+  ctx.fillText(p.char.name + ' ' + p.char.style + ' (P1)', 30, 22);
+  ctx.textAlign = 'right'; ctx.fillText(e.char.name + ' ' + e.char.style + ' (P2)', W - 30, 22);
   ctx.textAlign = 'center'; ctx.fillStyle = '#000'; ctx.font = 'bold 46px Arial';
   const t = String(Math.max(0, Math.ceil(timeLeft))).padStart(2, '0');
   ctx.fillText(t, W / 2 + 2, 62); ctx.fillStyle = '#ffcc44'; ctx.fillText(t, W / 2, 60);
@@ -736,7 +793,7 @@ function draw() {
   for (const fb of fireballs) {
     const pulse = 1 + .12 * Math.sin(frameCount / 3);
     ctx.fillStyle = 'rgba(120,180,255,.35)'; ctx.beginPath(); ctx.arc(fb.x, fb.y, fb.r * 1.7 * pulse, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#6cf'; ctx.beginPath(); ctx.arc(fb.x, fb.y, fb.r * pulse, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = fb.color || '#6cf'; ctx.beginPath(); ctx.arc(fb.x, fb.y, fb.r * pulse, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#eef'; ctx.beginPath(); ctx.arc(fb.x - 3, fb.y - 4, fb.r * .45, 0, Math.PI * 2); ctx.fill();
   }
   [p, e].sort((a, b) => a.y - b.y).forEach(drawFighter);
