@@ -29,11 +29,13 @@
   #toast { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,.8);
     border: 2px solid #ffcc44; padding: 8px 16px; border-radius: 8px; font-size: 13px; display: none; z-index: 5; white-space: nowrap; }
   #mute { position: absolute; top: 14px; right: 14px; z-index: 6; max-width: 62px; padding: 6px; font-size: 11px; }
+  #menuBtn { position: absolute; top: 14px; left: 14px; z-index: 6; max-width: 62px; padding: 6px; font-size: 11px; }
 </style>
 </head>
 <body>
 <div id="wrap">
   <canvas id="c" width="960" height="540"></canvas>
+  <button id="menuBtn">MENU</button>
   <button id="mute">SOUND: ON</button>
   <div id="toast"></div>
   <div id="menu">
@@ -73,7 +75,7 @@
       <button class="act" data-k="l">SP</button>
     </div>
   </div>
-  <div id="hint">P1: A/D move, W jump, S block, J/U/K/I attacks, L special. P2: arrows + 1/2/3/4/5. Up+L uppercut, Down+L dive/fireball. M mutes.</div>
+  <div id="hint">Hold away to block. P1: A/D move, W jump, S crouch, J/U/K/I attacks, L special. P2: arrows + 1/2/3/4/5. Up+L uppercut, Down+L dive/fireball. M mute, Esc menu.</div>
 </div>
 <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 <script>
@@ -149,6 +151,7 @@ addEventListener('keydown', e => {
   keys[k] = true;
   if (['arrowleft','arrowright','arrowup','arrowdown',' '].includes(k)) e.preventDefault();
   if (k === 'm') { muted = !muted; document.getElementById('mute').textContent = 'SOUND: ' + (muted ? 'OFF' : 'ON'); }
+  if (k === 'escape' && phase !== 'menu') backToMenu();
   if (phase === 'over') {
     if (mode === 'online' && isHost) startMatch();
     else if (mode === 'online') send({ type: 'restart' });
@@ -168,6 +171,11 @@ document.querySelectorAll('#pad button').forEach(b => {
 document.getElementById('mute').addEventListener('click', () => {
   initAudio(); muted = !muted; document.getElementById('mute').textContent = 'SOUND: ' + (muted ? 'OFF' : 'ON');
 });
+function backToMenu() {
+  if (mode === 'online') send({ type: 'bye' });
+  showMenu();
+}
+document.getElementById('menuBtn').addEventListener('click', () => { initAudio(); backToMenu(); });
 
 const c1 = document.getElementById('c1'), c2 = document.getElementById('c2'), stageSel = document.getElementById('stageSel');
 CHARS.forEach((c, i) => { c1.add(new Option(c.name, i)); c2.add(new Option(c.name, i)); });
