@@ -443,7 +443,7 @@ function playerInput(side) {
 }
 
 let p, e, fireballs = [], particles = [], texts = [], rings = [];
-let hitstop = 0, shake = 0, frameCount = 0;
+let hitstop = 0, shake = 0, frameCount = 0, screenFlash = 0, pDelay = 100, eDelay = 100;
 let phase = 'menu', msg = '', phaseTimer = 0;
 let mode = 'solo', isHost = false, peer = null, conn = null, roomCode = '', netInput = null, netEvents = [];
 let configTimer = null, readyTimer = null, netReady = false, configAck = false;
@@ -469,6 +469,7 @@ function impactFX(x, y, color, dmg, kind) {
   if (dmg) texts.push({ x, y: y - 20, text: String(dmg), life: 42, color: kind === 'hit' ? '#ffe066' : '#9cf' });
   shake = kind === 'block' ? 4 : 9;
   hitstop = kind === 'block' ? 2 : 5;
+  if (kind === 'hit' && dmg >= 10) screenFlash = 6;
 }
 function send(obj) { if (conn && conn.open) { try { conn.send(obj); } catch (err) {} } }
 
@@ -486,7 +487,7 @@ function startMatch() {
 function resetRound() {
   p.reset(); e.reset();
   fireballs = []; particles = []; texts = []; rings = []; netEvents = [];
-  timeLeft = 60; hitstop = 0; shake = 0;
+  timeLeft = 60; hitstop = 0; shake = 0; screenFlash = 0; pDelay = 100; eDelay = 100;
   phase = 'intro'; phaseTimer = 100; msg = 'ROUND ' + round;
   sfx('bell');
 }
@@ -694,6 +695,9 @@ function updateEffects() {
   for (const r of rings) { r.r += 2.2; r.life--; }
   rings = rings.filter(r => r.life > 0);
   if (shake > 0) shake--;
+  if (screenFlash > 0) screenFlash--;
+  if (pDelay > p.hp) pDelay = Math.max(p.hp, pDelay - .55);
+  if (eDelay > e.hp) eDelay = Math.max(e.hp, eDelay - .55);
 }
 function updateGuest() {
   p.x += (p.tx - p.x) * .35; p.y += (p.ty - p.y) * .35;
@@ -790,6 +794,9 @@ function drawBackground() {
     }
   }
   if (st === 0) {
+    const sunGlow = ctx.createRadialGradient(W / 2, 210, 10, W / 2, 210, 130);
+    sunGlow.addColorStop(0, 'rgba(255,217,120,.55)'); sunGlow.addColorStop(1, 'rgba(255,217,120,0)');
+    ctx.fillStyle = sunGlow; ctx.fillRect(W / 2 - 130, 80, 260, 260);
     ctx.fillStyle = '#ffd978'; ctx.beginPath(); ctx.arc(W / 2, 210, 78, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#6b2d55'; ctx.beginPath(); ctx.moveTo(0, GROUND); ctx.lineTo(0, 320); ctx.lineTo(130, 200); ctx.lineTo(250, 330); ctx.lineTo(360, 240); ctx.lineTo(500, GROUND); ctx.fill();
     ctx.fillStyle = '#4a2145'; ctx.beginPath(); ctx.moveTo(420, GROUND); ctx.lineTo(600, 250); ctx.lineTo(700, 350); ctx.lineTo(820, 220); ctx.lineTo(960, 330); ctx.lineTo(960, GROUND); ctx.fill();
@@ -797,23 +804,31 @@ function drawBackground() {
     for (let i = 0; i < 14; i++) {
       const bw = 60 + (i * 37) % 50, bx = i * 72 - 20, bh = 120 + (i * 53) % 180;
       ctx.fillStyle = i % 2 ? '#151540' : '#1e1e58'; ctx.fillRect(bx, GROUND - bh, bw, bh);
-      ctx.fillStyle = i % 3 ? '#ff5ac8' : '#5af0ff';
-      for (let wy = GROUND - bh + 14; wy < GROUND - 20; wy += 26) ctx.fillRect(bx + 10, wy, 6, 8);
+      const lit = (Math.floor(frameCount / 12) + i) % 5 !== 0;
+      ctx.fillStyle = lit ? (i % 3 ? '#ff5ac8' : '#5af0ff') : '#2a2a55';
+      for (let wy = GROUND - bh + 14; wy < GROUND - 20; wy += 26) {
+        ctx.globalAlpha = ((Math.floor(wy / 26) + i) % 4 === 0 && !lit) ? .2 : 1;
+        ctx.fillRect(bx + 10, wy, 6, 8);
+      }
+      ctx.globalAlpha = 1;
     }
-    ctx.fillStyle = 'rgba(255,90,200,.18)'; ctx.fillRect(0, 300, W, 6);
+    ctx.fillStyle = 'rgba(255,90,200,' + (.14 + .08 * Math.sin(frameCount / 10)) + ')'; ctx.fillRect(0, 300, W, 6);
   } else {
     ctx.fillStyle = '#ffe9a8'; ctx.beginPath(); ctx.arc(W / 2, 190, 62, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#14555c'; ctx.beginPath(); ctx.moveTo(0, GROUND); ctx.lineTo(120, 260); ctx.lineTo(260, 360); ctx.lineTo(420, 230); ctx.lineTo(600, GROUND); ctx.fill();
     ctx.fillStyle = '#0d444b'; ctx.beginPath(); ctx.moveTo(400, GROUND); ctx.lineTo(620, 250); ctx.lineTo(780, 350); ctx.lineTo(960, 240); ctx.lineTo(960, GROUND); ctx.fill();
     for (let i = 0; i < 6; i++) {
-      const lx = 90 + i * 150;
-      ctx.fillStyle = '#e94b3c'; ctx.beginPath(); ctx.ellipse(lx, 260, 14, 20, 0, 0, Math.PI * 2); ctx.fill();
+      const lx = 90 + i * 150, pulse = 1 + .12 * Math.sin(frameCount / 9 + i);
+      const glow = ctx.createRadialGradient(lx, 260, 4, lx, 260, 44);
+      glow.addColorStop(0, 'rgba(255,150,80,.35)'); glow.addColorStop(1, 'rgba(255,150,80,0)');
+      ctx.fillStyle = glow; ctx.fillRect(lx - 44, 216, 88, 88);
+      ctx.fillStyle = '#e94b3c'; ctx.beginPath(); ctx.ellipse(lx, 260, 14 * pulse, 20 * pulse, 0, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = '#ffd36b'; ctx.fillRect(lx - 2, 280, 4, 16);
     }
   }
-  ctx.fillStyle = 'rgba(20,10,30,.5)';
   for (let i = 0; i < 40; i++) {
-    const x = i * 25 + 6, y = GROUND - 8 - (i % 3) * 4;
+    const x = i * 25 + 6, y = GROUND - 8 - (i % 3) * 4 + Math.sin(frameCount / 14 + i * .8) * 2;
+    ctx.fillStyle = i % 5 === 0 ? 'rgba(255,180,120,.28)' : 'rgba(20,10,30,.5)';
     ctx.beginPath(); ctx.arc(x, y - 18, 9, Math.PI, 0); ctx.fill(); ctx.fillRect(x - 9, y - 18, 18, 18);
   }
   ctx.fillStyle = groundA; ctx.fillRect(0, GROUND, W, H - GROUND);
@@ -900,14 +915,42 @@ function drawBar(x, y, w, h, val, max, color, flip) {
   const fw = Math.max(0, Math.min(1, val / max)) * w;
   ctx.fillStyle = color; ctx.fillRect(flip ? x + w - fw : x, y, fw, h);
 }
+function rr(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+function portrait(x, y, f) {
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.beginPath(); ctx.arc(x, y, 23, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = f.char.color; ctx.beginPath(); ctx.arc(x, y, 19, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,.28)'; ctx.beginPath(); ctx.arc(x - 6, y - 7, 7, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 17px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(f.char.name[0], x, y + 1);
+  ctx.textBaseline = 'alphabetic';
+  ctx.restore();
+}
 function drawHUD() {
-  drawBar(30, 30, 390, 22, p.hp, 100, p.hp > 30 ? '#4ade80' : '#ef4444', false);
-  drawBar(W - 420, 30, 390, 22, e.hp, 100, e.hp > 30 ? '#4ade80' : '#ef4444', true);
-  drawBar(30, 58, 250, 10, p.meter, 100, '#fbbf24', false);
-  drawBar(W - 280, 58, 250, 10, e.meter, 100, '#fbbf24', true);
-  ctx.fillStyle = '#fff'; ctx.font = 'bold 18px Arial'; ctx.textAlign = 'left';
-  ctx.fillText(p.char.name + ' ' + p.char.style + ' (P1)', 30, 22);
-  ctx.textAlign = 'right'; ctx.fillText(e.char.name + ' ' + e.char.style + ' (P2)', W - 30, 22);
+  rr(16, 12, 432, 62, 10); ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fill();
+  ctx.strokeStyle = 'rgba(255,204,68,.45)'; ctx.lineWidth = 2; ctx.stroke();
+  rr(W - 448, 12, 432, 62, 10); ctx.fill(); ctx.stroke();
+  drawBar(70, 36, 340, 20, pDelay, 100, '#fde68a', false);
+  drawBar(70, 36, 340, 20, p.hp, 100, p.hp > 30 ? '#4ade80' : '#ef4444', false);
+  drawBar(W - 410, 36, 340, 20, eDelay, 100, '#fde68a', true);
+  drawBar(W - 410, 36, 340, 20, e.hp, 100, e.hp > 30 ? '#4ade80' : '#ef4444', true);
+  drawBar(70, 61, 260, 8, p.meter, 100, '#fbbf24', false);
+  drawBar(W - 330, 61, 260, 8, e.meter, 100, '#fbbf24', true);
+  portrait(42, 43, p); portrait(W - 42, 43, e);
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 16px Arial'; ctx.textAlign = 'left';
+  ctx.fillText(p.char.name + ' (P1)', 72, 30);
+  ctx.textAlign = 'right'; ctx.fillText(e.char.name + ' (P2)', W - 72, 30);
+  ctx.font = 'bold 10px Arial'; ctx.fillStyle = '#ffcc44';
+  ctx.textAlign = 'left'; ctx.fillText(p.char.style, 74, 78);
+  ctx.textAlign = 'right'; ctx.fillText(e.char.style, W - 74, 78);
   ctx.textAlign = 'center'; ctx.fillStyle = '#000'; ctx.font = 'bold 46px Arial';
   const t = String(Math.max(0, Math.ceil(timeLeft))).padStart(2, '0');
   ctx.fillText(t, W / 2 + 2, 62); ctx.fillStyle = '#ffcc44'; ctx.fillText(t, W / 2, 60);
@@ -915,8 +958,8 @@ function drawHUD() {
     ctx.fillStyle = i < winsP ? '#ffcc44' : '#444'; ctx.beginPath(); ctx.arc(W / 2 - 90 - i * 26, 40, 9, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = i < winsE ? '#ffcc44' : '#444'; ctx.beginPath(); ctx.arc(W / 2 + 90 + i * 26, 40, 9, 0, Math.PI * 2); ctx.fill();
   }
-  if (p.combo > 1) { ctx.textAlign = 'left'; ctx.fillStyle = '#ffd84d'; ctx.font = 'bold 22px Arial'; ctx.fillText(p.combo + ' HIT COMBO!', 34, 100); }
-  if (e.combo > 1) { ctx.textAlign = 'right'; ctx.fillStyle = '#ffd84d'; ctx.font = 'bold 22px Arial'; ctx.fillText(e.combo + ' HIT COMBO!', W - 34, 100); }
+  if (p.combo > 1) { ctx.textAlign = 'left'; ctx.fillStyle = '#ffd84d'; ctx.font = 'bold 22px Arial'; ctx.fillText(p.combo + ' HIT COMBO!', 34, 104); }
+  if (e.combo > 1) { ctx.textAlign = 'right'; ctx.fillStyle = '#ffd84d'; ctx.font = 'bold 22px Arial'; ctx.fillText(e.combo + ' HIT COMBO!', W - 34, 104); }
 }
 function draw() {
   ctx.save();
@@ -940,6 +983,16 @@ function draw() {
   for (const t of texts) { ctx.globalAlpha = Math.min(1, t.life / 15); ctx.fillStyle = '#000'; ctx.fillText(t.text, t.x + 2, t.y + 2); ctx.fillStyle = t.color; ctx.fillText(t.text, t.x, t.y); }
   ctx.globalAlpha = 1;
   ctx.restore();
+  const vig = ctx.createRadialGradient(W / 2, H / 2, 140, W / 2, H / 2, 620);
+  vig.addColorStop(0, 'rgba(0,0,0,0)');
+  vig.addColorStop(1, 'rgba(0,0,0,.42)');
+  ctx.fillStyle = vig; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(255,255,255,.025)';
+  for (let y = 0; y < H; y += 4) ctx.fillRect(0, y, W, 1);
+  if (screenFlash > 0) {
+    ctx.fillStyle = 'rgba(255,255,255,' + (screenFlash / 6 * .18) + ')';
+    ctx.fillRect(0, 0, W, H);
+  }
   if (phase !== 'menu') {
     drawHUD();
     if (msg) {
