@@ -44,6 +44,7 @@
       <button id="mSolo">SOLO VS AI</button>
       <button id="mLocal">LOCAL 2P</button>
       <button id="mOnline">ONLINE</button>
+      <button id="m3d">3D VERSION</button>
     </div>
     <div id="setup" hidden>
       <div class="row">
@@ -508,6 +509,7 @@ function setupOnline() {
 document.getElementById('mSolo').onclick = () => { sfx('menu'); setupSolo(); };
 document.getElementById('mLocal').onclick = () => { sfx('menu'); setupLocal(); };
 document.getElementById('mOnline').onclick = () => { sfx('menu'); setupOnline(); };
+document.getElementById('m3d').onclick = () => { location.href = '3d.html'; };
 document.getElementById('backBtn').onclick = () => { document.getElementById('setup').hidden = true; };
 document.getElementById('netBack').onclick = () => { document.getElementById('online').hidden = true; };
 document.getElementById('startBtn').onclick = () => { initAudio(); sfx('menu'); startMatch(); };
