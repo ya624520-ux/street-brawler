@@ -25,7 +25,7 @@
   .row { display: flex; gap: 10px; margin: 8px 0; flex-wrap: wrap; }
   .row label { flex: 1; min-width: 130px; text-align: left; font-size: 12px; color: #ccc; display: flex; flex-direction: column; gap: 4px; }
   #setup, #online { margin-top: 12px; }
-  #netMsg { font-size: 13px; color: #ffd86b; margin-top: 10px; min-height: 18px; word-break: break-all; }
+  #netMsg { font-size: 13px; color: #ffd86b; margin-top: 10px; min-height: 18px; word-break: break-all; white-space: pre-wrap; }
   #toast { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,.8);
     border: 2px solid #ffcc44; padding: 8px 16px; border-radius: 8px; font-size: 13px; display: none; z-index: 5; white-space: nowrap; }
   #mute { position: absolute; top: 14px; right: 14px; z-index: 6; max-width: 62px; padding: 6px; font-size: 11px; }
@@ -60,7 +60,7 @@
         <input id="codeIn" placeholder="ROOM CODE" maxlength="6">
         <button id="joinBtn">JOIN</button>
       </div>
-      <div class="row"><button id="netBack">BACK</button></div>
+      <div class="row"><button id="copyBtn">COPY LINK</button><button id="netCancel">CANCEL</button><button id="netBack">BACK</button></div>
       <div id="netMsg"></div>
     </div>
   </div>
@@ -212,7 +212,10 @@ document.getElementById('mute').addEventListener('click', () => {
   initAudio(); muted = !muted; document.getElementById('mute').textContent = 'SOUND: ' + (muted ? 'OFF' : 'ON');
 });
 function backToMenu() {
-  if (mode === 'online') send({ type: 'bye' });
+  if (mode === 'online' && conn) {
+    send({ type: 'bye' });
+    setTimeout(() => { leaveNet(); }, 250);
+  } else leaveNet();
   showMenu();
 }
 document.getElementById('menuBtn').addEventListener('click', () => { initAudio(); backToMenu(); });
@@ -427,6 +430,12 @@ let p, e, fireballs = [], particles = [], texts = [], rings = [];
 let hitstop = 0, shake = 0, frameCount = 0;
 let phase = 'menu', msg = '', phaseTimer = 0;
 let mode = 'solo', isHost = false, peer = null, conn = null, roomCode = '', netInput = null, netEvents = [];
+let configTimer = null, readyTimer = null, netReady = false, configAck = false;
+const ICE_SERVERS = { iceServers: [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:global.stun.twilio.com:3478' }
+] };
 let round = 1, winsP = 0, winsE = 0, timeLeft = 60, lastTime = 0, accumulator = 0;
 
 function fxHit(x, y, color, dmg, kind) {
@@ -503,43 +512,111 @@ document.getElementById('backBtn').onclick = () => { document.getElementById('se
 document.getElementById('netBack').onclick = () => { document.getElementById('online').hidden = true; };
 document.getElementById('startBtn').onclick = () => { initAudio(); sfx('menu'); startMatch(); };
 document.getElementById('diffSel').onchange = e => Object.assign(DIFF, DIFFS[e.target.selectedIndex]);
+function netSay(txt) { document.getElementById('netMsg').textContent = txt; }
+function roomLink(code) { return location.origin + location.pathname + '?room=' + code; }
+function clearNetTimers() {
+  if (configTimer) { clearInterval(configTimer); configTimer = null; }
+  if (readyTimer) { clearTimeout(readyTimer); readyTimer = null; }
+}
+function leaveNet() {
+  clearNetTimers();
+  if (conn) { try { conn.close(); } catch (err) {} conn = null; }
+  if (peer) { try { peer.destroy(); } catch (err) {} peer = null; }
+  netReady = false; configAck = false; netInput = null; netEvents = [];
+}
+function netLost(reason) {
+  clearNetTimers();
+  netSay(reason + '\nReturning to menu.');
+  toast(reason);
+  if (phase !== 'menu') showMenu();
+}
+function sendConfig() {
+  if (!isHost || !conn || !conn.open) return;
+  send({ type: 'config', c1: +c1.value, c2: +c2.value, stage: +stageSel.value, room: roomCode });
+}
+function hostBegin() {
+  if (!conn || !conn.open) return;
+  if (phase === 'menu') startMatch();
+  sendConfig();
+  if (!configTimer) configTimer = setInterval(() => { if (!configAck) sendConfig(); }, 700);
+}
 document.getElementById('hostBtn').onclick = () => {
   initAudio();
-  if (typeof Peer === 'undefined') { toast('Online library unavailable'); return; }
+  if (typeof Peer === 'undefined') { netSay('Online unavailable - library failed to load.'); return; }
+  leaveNet();
   isHost = true;
-  roomCode = Math.random().toString(36).slice(2, 8).toUpperCase();
-  try { peer = new Peer(roomCode); } catch (err) { toast('Could not start host'); return; }
-  document.getElementById('netMsg').textContent = 'ROOM CODE: ' + roomCode + ' — waiting for player...';
-  peer.on('open', id => { document.getElementById('netMsg').textContent = 'ROOM CODE: ' + id + ' — share this code.'; });
-  peer.on('connection', c => {
-    conn = c;
-    document.getElementById('netMsg').textContent = 'Player joined!';
-    startMatch();
-    send({ type: 'config', c1: +c1.value, c2: +c2.value, stage: +stageSel.value });
-    c.on('data', onNetData);
-    c.on('close', () => { toast('Opponent left'); showMenu(); });
+  const raw = Math.random().toString(36).slice(2, 8).toUpperCase();
+  roomCode = raw;
+  netSay('Starting host...');
+  try { peer = new Peer(roomCode, { config: ICE_SERVERS }); }
+  catch (err) { netSay('Could not start host: ' + err.message); return; }
+  peer.on('open', id => {
+    roomCode = id;
+    netSay('ROOM CODE: ' + id + '\n share: ' + roomLink(id));
   });
-  peer.on('error', err => { document.getElementById('netMsg').textContent = 'Error: ' + err.type; });
+  peer.on('connection', c => {
+    if (conn && conn.open) { try { c.close(); } catch (err) {} return; }
+    conn = c;
+    netReady = false; configAck = false; netInput = null;
+    c.on('data', onNetData);
+    c.on('open', () => {
+      netSay('Player connected. Syncing...');
+      readyTimer = setTimeout(() => { if (!netReady) hostBegin(); }, 2000);
+    });
+    c.on('close', () => netLost('Opponent left.'));
+    c.on('error', err => netLost('Connection error: ' + err.type));
+  });
+  peer.on('disconnected', () => {
+    netSay('Signal lost. Reconnecting...');
+    try { peer.reconnect(); } catch (err) {}
+  });
+  peer.on('error', err => {
+    netSay('Host error: ' + err.type + (err.message ? '\n' + err.message : ''));
+  });
 };
 document.getElementById('joinBtn').onclick = () => {
   initAudio();
-  if (typeof Peer === 'undefined') { toast('Online library unavailable'); return; }
+  if (typeof Peer === 'undefined') { netSay('Online unavailable - library failed to load.'); return; }
+  leaveNet();
   isHost = false;
   const code = document.getElementById('codeIn').value.trim().toUpperCase();
-  if (!code) { toast('Enter a room code'); return; }
-  try { peer = new Peer(); } catch (err) { toast('Could not start client'); return; }
-  document.getElementById('netMsg').textContent = 'Connecting to ' + code + '...';
+  if (!code) { netSay('Enter a room code first.'); return; }
+  netSay('Connecting to ' + code + '...');
+  try { peer = new Peer({ config: ICE_SERVERS }); }
+  catch (err) { netSay('Could not start client: ' + err.message); return; }
   peer.on('open', () => {
-    conn = peer.connect(code);
+    conn = peer.connect(code, { reliable: true });
+    conn.on('data', onNetData);
     conn.on('open', () => {
-      document.getElementById('netMsg').textContent = 'Connected!';
-      conn.on('data', onNetData);
-      conn.on('close', () => { toast('Opponent left'); showMenu(); });
+      netSay('Connected to ' + code + '. Waiting for match...');
+      send({ type: 'ready' });
     });
-    conn.on('error', () => { document.getElementById('netMsg').textContent = 'Could not connect.'; });
+    conn.on('close', () => netLost('Host left.'));
+    conn.on('error', err => netLost('Join error: ' + err.type));
   });
-  peer.on('error', err => { document.getElementById('netMsg').textContent = 'Error: ' + err.type; });
+  peer.on('disconnected', () => {
+    netSay('Signal lost. Reconnecting...');
+    try { peer.reconnect(); } catch (err) {}
+  });
+  peer.on('error', err => {
+    netSay(err.type === 'peer-unavailable' ? 'Room not found. Check the code and try again.' : 'Join error: ' + err.type);
+  });
 };
+document.getElementById('copyBtn').onclick = () => {
+  initAudio();
+  if (!roomCode) { netSay('Host a game first to get a link.'); return; }
+  const link = roomLink(roomCode);
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(link).then(() => netSay('Link copied:\n' + link)).catch(() => netSay('Copy this link:\n' + link));
+  } else netSay('Copy this link:\n' + link);
+};
+document.getElementById('netCancel').onclick = () => { initAudio(); leaveNet(); netSay('Cancelled.'); showMenu(); };
+(function prefillRoom() {
+  try {
+    const code = new URLSearchParams(location.search).get('room');
+    if (code) { document.getElementById('codeIn').value = code.toUpperCase(); netSay('Room link loaded - press JOIN.'); }
+  } catch (err) {}
+})();
 
 function snapshotSide(f) {
   return {
@@ -566,9 +643,21 @@ function applySnapshot(d) {
   for (const ev of (d.ev || [])) impactFX(ev.x, ev.y, ev.color, ev.dmg, ev.kind);
 }
 function onNetData(d) {
-  if (d.type === 'config') {
+  if (!d || !d.type) return;
+  if (d.type === 'ready' && isHost) {
+    netReady = true;
+    if (readyTimer) { clearTimeout(readyTimer); readyTimer = null; }
+    netSay('Player ready. Starting match...');
+    hostBegin();
+  } else if (d.type === 'config' && !isHost) {
     c1.value = d.c1; c2.value = d.c2; stageSel.value = d.stage;
-    startMatch();
+    if (phase === 'menu') startMatch();
+    netSay('Match started! Good luck.');
+    send({ type: 'configok' });
+  } else if (d.type === 'configok' && isHost) {
+    configAck = true;
+    clearNetTimers();
+    netSay('Match started!\nRoom: ' + roomCode + '\nShare: ' + roomLink(roomCode));
   } else if (d.type === 'input') {
     netInput = d.inp;
   } else if (d.type === 'snap') {
@@ -576,7 +665,7 @@ function onNetData(d) {
   } else if (d.type === 'restart') {
     startMatch();
   } else if (d.type === 'bye') {
-    showMenu();
+    netLost('Opponent left the match.');
   }
 }
 
