@@ -224,6 +224,7 @@ document.getElementById('mute').addEventListener('click', () => {
   initAudio(); muted = !muted; document.getElementById('mute').textContent = 'SOUND: ' + (muted ? 'OFF' : 'ON');
 });
 function backToMenu() {
+  reconnecting = false;
   if (mode === 'online' && conn) {
     send({ type: 'bye' });
     setTimeout(() => { leaveNet(); }, 250);
@@ -471,12 +472,15 @@ function playerInput(side) {
 let p, e, fireballs = [], particles = [], texts = [], rings = [];
 let hitstop = 0, shake = 0, frameCount = 0, screenFlash = 0, pDelay = 100, eDelay = 100;
 let phase = 'menu', msg = '', phaseTimer = 0;
-let mode = 'solo', isHost = false, peer = null, conn = null, roomCode = '', netInput = null, netEvents = [];
-let configTimer = null, readyTimer = null, netReady = false, configAck = false;
+let mode = 'solo', isHost = false, peer = null, conn = null, roomCode = '', joinCode = '', netInput = null, netEvents = [];
+let configTimer = null, readyTimer = null, reconnectTimer = null, pingTimer = null, netReady = false, configAck = false;
+let leavingNet = false, reconnecting = false, reconnectAttempts = 0, netPing = 0, pingSent = 0;
 const ICE_SERVERS = { iceServers: [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
-  { urls: 'stun:global.stun.twilio.com:3478' }
+  { urls: 'stun:global.stun.twilio.com:3478' },
+  { urls: 'stun:stun.services.mozilla.com' },
+  { urls: 'stun:stun.cloudflare.com:3478' }
 ] };
 let round = 1, winsP = 0, winsE = 0, timeLeft = 60, lastTime = 0, accumulator = 0;
 
@@ -561,18 +565,49 @@ function roomLink(code) { return location.origin + location.pathname + '?room=' 
 function clearNetTimers() {
   if (configTimer) { clearInterval(configTimer); configTimer = null; }
   if (readyTimer) { clearTimeout(readyTimer); readyTimer = null; }
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
 }
 function leaveNet() {
+  leavingNet = true;
   clearNetTimers();
   if (conn) { try { conn.close(); } catch (err) {} conn = null; }
   if (peer) { try { peer.destroy(); } catch (err) {} peer = null; }
   netReady = false; configAck = false; netInput = null; netEvents = [];
+  netPing = 0; pingSent = 0;
+  if (!reconnecting) reconnectAttempts = 0;
 }
 function netLost(reason) {
+  reconnecting = false;
+  if (conn || peer) leaveNet();
+  leavingNet = true;
   clearNetTimers();
   netSay(reason + '\nReturning to menu.');
   toast(reason);
   if (phase !== 'menu') showMenu();
+}
+function handleDisconnect(reason) {
+  if (mode !== 'online' || leavingNet) return;
+  reconnecting = true;
+  clearNetTimers();
+  netSay(reason + '\nReconnecting...');
+  toast(reason);
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    reconnectAttempts++;
+    if (reconnectAttempts > 5) { netLost('Could not reconnect after 5 tries.'); return; }
+    netSay('Reconnect attempt ' + reconnectAttempts + '/5...');
+    if (isHost) startHost(roomCode, true); else startJoin(joinCode, true);
+  }, 1200);
+}
+function startPing() {
+  if (pingTimer || !isHost) return;
+  pingTimer = setInterval(() => {
+    if (!conn || !conn.open) return;
+    pingSent = performance.now();
+    send({ type: 'ping', t: pingSent });
+  }, 1000);
 }
 function sendConfig() {
   if (!isHost || !conn || !conn.open) return;
@@ -582,70 +617,92 @@ function hostBegin() {
   if (!conn || !conn.open) return;
   if (phase === 'menu') startMatch();
   sendConfig();
+  startPing();
   if (!configTimer) configTimer = setInterval(() => { if (!configAck) sendConfig(); }, 700);
 }
-document.getElementById('hostBtn').onclick = () => {
+function startHost(code, retry) {
   initAudio();
   if (typeof Peer === 'undefined') { netSay('Online unavailable - library failed to load.'); return; }
+  if (!retry) reconnecting = false;
   leaveNet();
+  leavingNet = false;
   isHost = true;
-  const raw = Math.random().toString(36).slice(2, 8).toUpperCase();
-  roomCode = raw;
+  const raw = (code || Math.random().toString(36).slice(2, 8).toUpperCase()).toUpperCase();
+  roomCode = raw; joinCode = '';
   netSay('Starting host...');
-  try { peer = new Peer(roomCode, { config: ICE_SERVERS }); }
+  let me;
+  try { me = new Peer(roomCode, { config: ICE_SERVERS }); peer = me; }
   catch (err) { netSay('Could not start host: ' + err.message); return; }
-  peer.on('open', id => {
+  me.on('open', id => {
     roomCode = id;
     netSay('ROOM CODE: ' + id + '\n share: ' + roomLink(id));
   });
-  peer.on('connection', c => {
-    if (conn && conn.open) { try { c.close(); } catch (err) {} return; }
+  me.on('connection', c => {
+    if (conn && conn.open && conn !== c) { try { c.close(); } catch (err) {} return; }
     conn = c;
-    netReady = false; configAck = false; netInput = null;
+    netReady = false; configAck = false; netInput = null; reconnectAttempts = 0;
     c.on('data', onNetData);
     c.on('open', () => {
+      reconnectAttempts = 0; reconnecting = false;
       netSay('Player connected. Syncing...');
-      readyTimer = setTimeout(() => { if (!netReady) hostBegin(); }, 2000);
+      readyTimer = setTimeout(() => { if (!netReady) hostBegin(); }, 1800);
     });
-    c.on('close', () => netLost('Opponent left.'));
-    c.on('error', err => netLost('Connection error: ' + err.type));
+    c.on('close', () => { if (conn === c) handleDisconnect('Opponent left.'); });
+    c.on('error', err => { if (conn === c) handleDisconnect('Connection error: ' + err.type); });
   });
-  peer.on('disconnected', () => {
+  me.on('disconnected', () => {
+    if (peer !== me || leavingNet) return;
     netSay('Signal lost. Reconnecting...');
-    try { peer.reconnect(); } catch (err) {}
+    try { me.reconnect(); } catch (err) {}
   });
-  peer.on('error', err => {
-    netSay('Host error: ' + err.type + (err.message ? '\n' + err.message : ''));
+  me.on('error', err => {
+    if (peer !== me || leavingNet) return;
+    if (err.type === 'unavailable-id') {
+      netSay('Room code was taken. Getting a new one...');
+      reconnectTimer = setTimeout(() => startHost(null, true), 1200);
+    } else netSay('Host error: ' + err.type + (err.message ? '\n' + err.message : ''));
   });
-};
-document.getElementById('joinBtn').onclick = () => {
+}
+function startJoin(code, retry) {
   initAudio();
   if (typeof Peer === 'undefined') { netSay('Online unavailable - library failed to load.'); return; }
+  if (!retry) reconnecting = false;
   leaveNet();
+  leavingNet = false;
   isHost = false;
-  const code = document.getElementById('codeIn').value.trim().toUpperCase();
-  if (!code) { netSay('Enter a room code first.'); return; }
-  netSay('Connecting to ' + code + '...');
-  try { peer = new Peer({ config: ICE_SERVERS }); }
+  joinCode = (code || document.getElementById('codeIn').value).trim().toUpperCase();
+  if (!joinCode) { netSay('Enter a room code first.'); return; }
+  document.getElementById('codeIn').value = joinCode;
+  netSay('Connecting to ' + joinCode + '...');
+  let me;
+  try { me = new Peer({ config: ICE_SERVERS }); peer = me; }
   catch (err) { netSay('Could not start client: ' + err.message); return; }
-  peer.on('open', () => {
-    conn = peer.connect(code, { reliable: true });
-    conn.on('data', onNetData);
-    conn.on('open', () => {
-      netSay('Connected to ' + code + '. Waiting for match...');
+  me.on('open', () => {
+    if (peer !== me || leavingNet) return;
+    const c = me.connect(joinCode, { reliable: true });
+    conn = c;
+    c.on('data', onNetData);
+    c.on('open', () => {
+      reconnectAttempts = 0; reconnecting = false;
+      netSay('Connected to ' + joinCode + '. Waiting for match...');
       send({ type: 'ready' });
     });
-    conn.on('close', () => netLost('Host left.'));
-    conn.on('error', err => netLost('Join error: ' + err.type));
+    c.on('close', () => { if (conn === c) handleDisconnect('Host left.'); });
+    c.on('error', err => { if (conn === c) handleDisconnect('Join error: ' + err.type); });
   });
-  peer.on('disconnected', () => {
+  me.on('disconnected', () => {
+    if (peer !== me || leavingNet) return;
     netSay('Signal lost. Reconnecting...');
-    try { peer.reconnect(); } catch (err) {}
+    try { me.reconnect(); } catch (err) {}
   });
-  peer.on('error', err => {
-    netSay(err.type === 'peer-unavailable' ? 'Room not found. Check the code and try again.' : 'Join error: ' + err.type);
+  me.on('error', err => {
+    if (peer !== me || leavingNet) return;
+    netSay(err.type === 'peer-unavailable' ? 'Room not found. Retrying...' : 'Join error: ' + err.type);
+    if (err.type === 'peer-unavailable') handleDisconnect('Room not found. Retrying...');
   });
-};
+}
+document.getElementById('hostBtn').onclick = () => startHost();
+document.getElementById('joinBtn').onclick = () => startJoin();
 document.getElementById('copyBtn').onclick = () => {
   initAudio();
   if (!roomCode) { netSay('Host a game first to get a link.'); return; }
@@ -654,7 +711,7 @@ document.getElementById('copyBtn').onclick = () => {
     navigator.clipboard.writeText(link).then(() => netSay('Link copied:\n' + link)).catch(() => netSay('Copy this link:\n' + link));
   } else netSay('Copy this link:\n' + link);
 };
-document.getElementById('netCancel').onclick = () => { initAudio(); leaveNet(); netSay('Cancelled.'); showMenu(); };
+document.getElementById('netCancel').onclick = () => { initAudio(); reconnecting = false; leaveNet(); netSay('Cancelled.'); showMenu(); };
 (function prefillRoom() {
   try {
     const code = new URLSearchParams(location.search).get('room');
@@ -674,6 +731,7 @@ function snapshotSide(f) {
 function applySnapshot(d) {
   phase = d.phase; phaseTimer = d.phaseTimer; msg = d.msg; timeLeft = d.timeLeft;
   winsP = d.winsP; winsE = d.winsE; round = d.round;
+  if (d.ping !== undefined) netPing = d.ping;
   const apply = (f, s) => {
     f.tx = s.x; f.ty = s.y;
     f.hp = s.hp; f.meter = s.meter; f.facing = s.facing;
@@ -683,7 +741,10 @@ function applySnapshot(d) {
     if (s.charIndex !== undefined && s.charIndex !== f.charIndex) f.setChar(s.charIndex);
   };
   apply(e, d.s[0]); apply(p, d.s[1]);
-  fireballs = (d.fb || []).map(b => ({ x: b.x, y: b.y, vx: b.vx, dmg: b.dmg, life: b.life, r: b.r, color: b.color, owner: b.side === 0 ? e : p }));
+  fireballs = (d.fb || []).map((b, i) => {
+    const old = fireballs[i];
+    return { x: old ? old.x : b.x, y: old ? old.y : b.y, tx: b.x, ty: b.y, vx: b.vx, dmg: b.dmg, life: b.life, r: b.r, color: b.color, owner: b.side === 0 ? e : p };
+  });
   for (const ev of (d.ev || [])) impactFX(ev.x, ev.y, ev.color, ev.dmg, ev.kind);
 }
 function onNetData(d) {
@@ -702,6 +763,10 @@ function onNetData(d) {
     configAck = true;
     clearNetTimers();
     netSay('Match started!\nRoom: ' + roomCode + '\nShare: ' + roomLink(roomCode));
+  } else if (d.type === 'ping' && !isHost) {
+    send({ type: 'pong', t: d.t });
+  } else if (d.type === 'pong' && isHost && d.t) {
+    netPing = Math.round(performance.now() - d.t);
   } else if (d.type === 'input') {
     netInput = d.inp;
   } else if (d.type === 'snap') {
@@ -728,6 +793,7 @@ function updateEffects() {
 function updateGuest() {
   p.x += (p.tx - p.x) * .35; p.y += (p.ty - p.y) * .35;
   e.x += (e.tx - e.x) * .35; e.y += (e.ty - e.y) * .35;
+  for (const b of fireballs) { if (b.tx !== undefined) { b.x += (b.tx - b.x) * .4; b.y += (b.ty - b.y) * .4; } }
   updateEffects();
   if (frameCount % 3 === 0) send({ type: 'input', inp: playerInput(1) });
 }
@@ -792,7 +858,7 @@ function update() {
   else if (timeLeft <= 0) { timeLeft = 0; endRound(false); }
   if (mode === 'online' && isHost && frameCount % 3 === 0 && conn && conn.open) {
     send({
-      type: 'snap', phase, phaseTimer, msg, timeLeft, winsP, winsE, round,
+      type: 'snap', phase, phaseTimer, msg, timeLeft, winsP, winsE, round, ping: netPing,
       s: [snapshotSide(p), snapshotSide(e)],
       fb: fireballs.map(b => ({ x: b.x, y: b.y, vx: b.vx, dmg: b.dmg, life: b.life, r: b.r, color: b.color, side: b.owner.side })),
       ev: netEvents
@@ -997,6 +1063,10 @@ function drawHUD() {
   for (let i = 0; i < 2; i++) {
     ctx.fillStyle = i < winsP ? '#ffcc44' : '#444'; ctx.beginPath(); ctx.arc(W / 2 - 90 - i * 26, 40, 9, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = i < winsE ? '#ffcc44' : '#444'; ctx.beginPath(); ctx.arc(W / 2 + 90 + i * 26, 40, 9, 0, Math.PI * 2); ctx.fill();
+  }
+  if (mode === 'online') {
+    ctx.textAlign = 'center'; ctx.font = 'bold 12px Arial'; ctx.fillStyle = 'rgba(255,255,255,.75)';
+    ctx.fillText((isHost ? 'HOST' : 'GUEST') + '  ' + netPing + 'ms', W / 2, 86);
   }
   if (p.combo > 1) { ctx.textAlign = 'left'; ctx.fillStyle = '#ffd84d'; ctx.font = 'bold 22px Arial'; ctx.fillText(p.combo + ' HIT COMBO!', 34, 104); }
   if (e.combo > 1) { ctx.textAlign = 'right'; ctx.fillStyle = '#ffd84d'; ctx.font = 'bold 22px Arial'; ctx.fillText(e.combo + ' HIT COMBO!', W - 34, 104); }
